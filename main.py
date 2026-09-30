@@ -64,8 +64,7 @@ def get_klines(symbol, category="linear"):
     try:
         url=f"https://api.bybit.com/v5/market/kline?category={category}&symbol={symbol}USDT&interval=60&limit=100"
         r=requests.get(url,headers=headers,timeout=15).json()
-        klines=r["result"]["list"]
-        klines=klines[::-1]
+        klines=r["result"]["list"][::-1]
         closes=[float(k[4]) for k in klines]
         return closes
     except:
@@ -85,8 +84,7 @@ def calc_sma(prices, period):
 
 def calc_rsi(prices, period=14):
     if len(prices)<period+1: return 50
-    gains=0
-    losses=0
+    gains=0; losses=0
     for i in range(1, period+1):
         diff=prices[-i]-prices[-i-1]
         if diff>=0: gains+=diff
@@ -100,19 +98,24 @@ def get_market_signal(symbol):
     if len(closes)<50:
         closes=get_klines(symbol, "spot")
     if len(closes)<50:
-        return "LONG", 55, 0, 0
+        return "LONG", 50, 0, 0
     ema20=calc_ema(closes,20)
     ema50=calc_ema(closes,50)
     sma50=calc_sma(closes,50)
     rsi=calc_rsi(closes,14)
-    if ema20 and ema50 and ema20>ema50 and 45<rsi<72:
+    if rsi <= 30:
         direction="LONG"
-    elif ema20 and ema50 and ema20<ema50 and 28<rsi<55:
+    elif rsi >= 70:
         direction="SHORT"
+    elif ema20 and ema50:
+        if ema20 > ema50 * 1.002:
+            direction="LONG"
+        elif ema20 < ema50 * 0.998:
+            direction="SHORT"
+        else:
+            direction="LONG" if closes[-1] > sma50 else "SHORT"
     else:
-        if rsi<30: direction="LONG"
-        elif rsi>70: direction="SHORT"
-        else: direction="LONG" if closes[-1]>sma50 else "SHORT"
+        direction="LONG" if closes[-1] > sma50 else "SHORT"
     return direction, rsi, ema20, ema50
 
 def crypto_signal(symbol):
@@ -120,16 +123,12 @@ def crypto_signal(symbol):
     if price is None:
         return f"{symbol} price loading, tap again"
     direction, rsi, ema20, ema50 = get_market_signal(symbol)
-    if symbol in ["BTC","ETH","SOL","BNB","XRP","AVAX","ADA","LINK"]:
-        lev="10x"
-    else:
-        lev="5x"
+    # FIXED: Crypto Leverage 5x / 200x
+    lev="5x / 200x"
     if direction=="LONG":
-        t1=price*1.011; t2=price*1.028; t3=price*1.047; t4=price*1.103
-        sl=price*0.95
+        t1=price*1.011; t2=price*1.028; t3=price*1.047; t4=price*1.103; sl=price*0.95
     else:
-        t1=price*0.989; t2=price*0.972; t3=price*0.953; t4=price*0.897
-        sl=price*1.05
+        t1=price*0.989; t2=price*0.972; t3=price*0.953; t4=price*0.897; sl=price*1.05
     msg=f"{direction} - {symbol}\n\nEntry: {fmt(price)}\n\nTargets: {fmt(t1)} / {fmt(t2)} / {fmt(t3)} / {fmt(t4)}\n\nStop: {fmt(sl)}\n\nLeverage: {lev} Isolated\n\nTA: RSI {rsi:.1f} | EMA20 {fmt(ema20) if ema20 else 'N/A'} | EMA50 {fmt(ema50) if ema50 else 'N/A'}\nMove SL to entry after TP1."
     return msg
 
@@ -147,6 +146,7 @@ def gold_signal():
         buy_low=p-8; buy_high=p; sl=p-28; tp1=p+18; tp2=p+35; tp3=p+75
     else:
         buy_low=p; buy_high=p+8; sl=p+28; tp1=p-18; tp2=p-35; tp3=p-75
+    # NO LEVERAGE FOR GOLD
     msg=f"XAUUSD {direction} {fmt(buy_low)}/{fmt(buy_high)}\nSL {fmt(sl)}\nTP1 {fmt(tp1)}\nTP2 {fmt(tp2)}\nTP3 {fmt(tp3)}\n\nTA: RSI {rsi:.1f} | Live {fmt(p)} | RR 1:2.6"
     return msg
 
@@ -166,7 +166,7 @@ def menu(page=0):
     return InlineKeyboardMarkup(btns)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Skelly Pro 50 - LIVE TA (RSI+EMA) - Crypto Leverage Only\nSelect coin:", reply_markup=menu(0))
+    await update.message.reply_text("Skelly Pro 50 - Crypto 5x/200x - Gold No Leverage\nSelect coin:", reply_markup=menu(0))
 
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q=update.callback_query
@@ -185,20 +185,4 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sym=d.replace("C_","")
         await q.edit_message_text(f"Fetching {sym} LIVE + RSI/EMA...")
         s=crypto_signal(sym)
-        await context.bot.send_message(chat_id=q.message.chat.id, text=s, reply_markup=menu(0))
-
-def run_bot():
-    app=ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("menu", start))
-    app.add_handler(CallbackQueryHandler(handle))
-    app.run_polling()
-
-flask_app=Flask(__name__)
-@flask_app.route("/")
-def home():
-    return "Skelly Pro Live - TA Connected - Crypto Leverage Only"
-
-if __name__=="__main__":
-    threading.Thread(target=lambda: flask_app.run(host="0.0.0.0", port=10000), daemon=True).start()
-    run_bot()
+        await context.bot.send_message(chat_id=q.message.chat.id, text
