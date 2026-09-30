@@ -1,61 +1,36 @@
 import os
-import time
-import yfinance as yf
-import pandas as pd
-import requests
+import threading
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from flask import Flask
-import threading
 
+# NO TOKEN HERE - we get it from Render only
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN not set!")
 
-# === SKELLY V6 SCANNER LOGIC ===
-def scan_market():
-    # We scan top crypto + stocks
-    symbols = ["BTC-USD", "ETH-USD", "SOL-USD", "AAPL", "TSLA", "NVDA"]
-    results = []
-    for sym in symbols:
-        try:
-            df = yf.download(sym, period="1d", interval="15m", progress=False)
-            if len(df) < 20: continue
-            # Simple momentum breakout
-            last = df['Close'].iloc[-1]
-            sma = df['Close'].rolling(20).mean().iloc[-1]
-            if last > sma * 1.01:
-                results.append(f"✅ {sym} - Bullish Breakout: ${last:.2f} > SMA ${sma:.2f}")
-            else:
-                results.append(f"⚪ {sym} - Waiting: ${last:.2f}")
-        except Exception as e:
-            results.append(f"❌ {sym} Error")
-    return "\n".join(results) if results else "No data yet."
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🔥 Skelly Sniper Pro V6 LIVE\nUse /scan")
 
-async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔥 Skelly Sniper Pro V6 LIVE\n\nCommands:\n/scan - Scan Now\n/start - Menu")
+async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("✅ Bot is alive! Scanner ready.")
 
-async def scan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔍 Scanning market... please wait 10s")
-    result = scan_market()
-    await update.message.reply_text(f"📊 SKELLY V6 RESULTS:\n\n{result}\n\n_Updated: Just now_", parse_mode="Markdown")
-
-def main():
-    print("V6 LIVE - Starting bot polling...")
+def run_bot():
+    if not BOT_TOKEN:
+        print("ERROR: BOT_TOKEN not set in Render Environment!")
+        return
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start_cmd))
-    app.add_handler(CommandHandler("scan", scan_cmd))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("scan", scan))
+    print("Bot started polling...")
     app.run_polling()
 
-# === FLASK FOR RENDER FREE WEB SERVICE ===
+# Flask for Render Web Service
 flask_app = Flask(__name__)
+
 @flask_app.route('/')
 def home():
-    return "Skelly V6 LIVE - Bot is running"
-
-def run_flask():
-    flask_app.run(host='0.0.0.0', port=10000)
+    return "Skelly Sniper Pro is LIVE"
 
 if __name__ == "__main__":
-    threading.Thread(target=run_flask, daemon=True).start()
-    main()
+    # Run Flask in background
+    threading.Thread(target=lambda: flask_app.run(host='0.0.0.0', port=10000), daemon=True).start()
+    run_bot()
