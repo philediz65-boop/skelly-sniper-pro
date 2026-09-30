@@ -1,3 +1,4 @@
+# FINAL - DEPLOY MUST PASS
 import os, threading, requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
@@ -8,161 +9,130 @@ COINS = ["BTC","ETH","SOL","BNB","XRP","DOGE","AVAX","ADA","LINK","DOT","MATIC",
 
 def fmt(p):
     p=float(p)
-    if p<0.0001:
-        return "{:.6f}".format(p)
-    if p<0.01:
-        return "{:.5f}".format(p)
-    if p<1:
-        return "{:.4f}".format(p)
-    return "{:.2f}".format(p)
+    return f"{p:.6f}" if p<0.0001 else f"{p:.5f}" if p<0.01 else f"{p:.4f}" if p<1 else f"{p:.2f}"
 
-def get_price(symbol):
-    symbol=symbol.upper()
-    headers={"User-Agent":"Mozilla/5.0"}
+def get_price(s):
+    h={"User-Agent":"Mozilla/5.0"}
+    for cat in ["linear","spot"]:
+        try:
+            r=requests.get(f"https://api.bybit.com/v5/market/tickers?category={cat}&symbol={s}USDT",headers=h,timeout=10).json()
+            v=float(r["result"]["list"][0]["lastPrice"])
+            if v>0: return v
+        except: pass
     try:
-        url=f"https://api.bybit.com/v5/market/tickers?category=linear&symbol={symbol}USDT"
-        r=requests.get(url,headers=headers,timeout=10).json()
-        price=r["result"]["list"][0]["lastPrice"]
-        if float(price)>0:
-            return float(price)
-    except:
-        pass
-    try:
-        url=f"https://api.bybit.com/v5/market/tickers?category=spot&symbol={symbol}USDT"
-        r=requests.get(url,headers=headers,timeout=10).json()
-        price=r["result"]["list"][0]["lastPrice"]
-        if float(price)>0:
-            return float(price)
-    except:
-        pass
-    try:
-        url=f"https://www.okx.com/api/v5/market/ticker?instId={symbol}-USDT"
-        r=requests.get(url,headers=headers,timeout=10).json()
+        r=requests.get(f"https://www.okx.com/api/v5/market/ticker?instId={s}-USDT",headers=h,timeout=10).json()
         return float(r["data"][0]["last"])
-    except:
-        pass
-    try:
-        url=f"https://api.coinbase.com/v2/prices/{symbol}-USD/spot"
-        r=requests.get(url,headers=headers,timeout=10).json()
-        return float(r["data"]["amount"])
-    except:
-        return None
+    except: return None
 
 def get_gold():
-    headers={"User-Agent":"Mozilla/5.0"}
+    h={"User-Agent":"Mozilla/5.0"}
     try:
-        url="https://api.bybit.com/v5/market/tickers?category=spot&symbol=PAXGUSDT"
-        r=requests.get(url,headers=headers,timeout=10).json()
-        price=float(r["result"]["list"][0]["lastPrice"])
-        if price>0:
-            return price
-    except:
-        pass
+        r=requests.get("https://api.bybit.com/v5/market/tickers?category=spot&symbol=PAXGUSDT",headers=h,timeout=10).json()
+        v=float(r["result"]["list"][0]["lastPrice"])
+        if v>0: return v
+    except: pass
     try:
-        url="https://www.okx.com/api/v5/market/ticker?instId=PAXG-USDT"
-        r=requests.get(url,headers=headers,timeout=10).json()
+        r=requests.get("https://www.okx.com/api/v5/market/ticker?instId=PAXG-USDT",headers=h,timeout=10).json()
         return float(r["data"][0]["last"])
-    except:
-        pass
+    except: return 4183.64
+
+def get_klines(s,c="linear"):
     try:
-        r=requests.get("https://data-asg.goldprice.org/dbXRates/USD",headers=headers,timeout=10).json()
-        return float(r["items"][0]["xauPrice"])
-    except:
-        return 4183.64
+        r=requests.get(f"https://api.bybit.com/v5/market/kline?category={c}&symbol={s}USDT&interval=60&limit=100",timeout=15).json()
+        return [float(x[4]) for x in r["result"]["list"][::-1]]
+    except: return []
 
-def get_klines(symbol, category="linear"):
-    headers={"User-Agent":"Mozilla/5.0"}
-    try:
-        url=f"https://api.bybit.com/v5/market/kline?category={category}&symbol={symbol}USDT&interval=60&limit=100"
-        r=requests.get(url,headers=headers,timeout=15).json()
-        klines=r["result"]["list"][::-1]
-        closes=[float(k[4]) for k in klines]
-        return closes
-    except:
-        return []
+def calc_ema(prices,p):
+    if len(prices)<p: return None
+    k=2/(p+1); e=prices[0]
+    for x in prices[1:]: e=x*k+e*(1-k)
+    return e
 
-def calc_ema(prices, period):
-    if len(prices)<period:
-        return None
-    k=2/(period+1)
-    ema=prices[0]
-    for p in prices[1:]:
-        ema=p*k+ema*(1-k)
-    return ema
+def calc_rsi(prices,p=14):
+    if len(prices)<p+1: return 50
+    g=l=0
+    for i in range(1,p+1):
+        d=prices[-i]-prices[-i-1]
+        if d>=0: g+=d
+        else: l+=-d
+    if l==0: return 70
+    return 100-(100/(1+g/l))
 
-def calc_sma(prices, period):
-    if len(prices)<period:
-        return None
-    return sum(prices[-period:])/period
+def get_signal(s):
+    cl=get_klines(s,"linear")
+    if len(cl)<50: cl=get_klines(s,"spot")
+    if len(cl)<50: return "LONG",50,0,0
+    e20=calc_ema(cl,20); e50=calc_ema(cl,50)
+    rsi=calc_rsi(cl,14)
+    if rsi<=30: d="LONG"
+    elif rsi>=70: d="SHORT"
+    elif e20 and e50:
+        d="LONG" if e20>e50*1.002 else "SHORT" if e20<e50*0.998 else "LONG"
+    else: d="LONG"
+    return d,rsi,e20,e50
 
-def calc_rsi(prices, period=14):
-    if len(prices)<period+1:
-        return 50
-    gains=0
-    losses=0
-    for i in range(1, period+1):
-        diff=prices[-i]-prices[-i-1]
-        if diff>=0:
-            gains+=diff
-        else:
-            losses+=-diff
-    if losses==0:
-        return 70
-    rs=gains/losses
-    return 100-(100/(1+rs))
-
-def get_market_signal(symbol):
-    closes=get_klines(symbol, "linear")
-    if len(closes)<50:
-        closes=get_klines(symbol, "spot")
-    if len(closes)<50:
-        return "LONG", 50, 0, 0
-    ema20=calc_ema(closes,20)
-    ema50=calc_ema(closes,50)
-    sma50=calc_sma(closes,50)
-    rsi=calc_rsi(closes,14)
-    if rsi <= 30:
-        direction="LONG"
-    elif rsi >= 70:
-        direction="SHORT"
-    elif ema20 and ema50:
-        if ema20 > ema50 * 1.002:
-            direction="LONG"
-        elif ema20 < ema50 * 0.998:
-            direction="SHORT"
-        else:
-            direction="LONG" if closes[-1] > sma50 else "SHORT"
+def crypto_signal(s):
+    pr=get_price(s)
+    if pr is None: return f"{s} loading, tap again"
+    d,rsi,e20,e50=get_signal(s)
+    if d=="LONG":
+        t1,t2,t3,t4,sl=pr*1.011,pr*1.028,pr*1.047,pr*1.103,pr*0.95
     else:
-        direction="LONG" if closes[-1] > sma50 else "SHORT"
-    return direction, rsi, ema20, ema50
-
-def crypto_signal(symbol):
-    price=get_price(symbol)
-    if price is None:
-        return f"{symbol} price loading, tap again"
-    direction, rsi, ema20, ema50 = get_market_signal(symbol)
-    lev="5x / 200x"
-    if direction=="LONG":
-        t1=price*1.011
-        t2=price*1.028
-        t3=price*1.047
-        t4=price*1.103
-        sl=price*0.95
-    else:
-        t1=price*0.989
-        t2=price*0.972
-        t3=price*0.953
-        t4=price*0.897
-        sl=price*1.05
-    ema20_str = fmt(ema20) if ema20 else "N/A"
-    ema50_str = fmt(ema50) if ema50 else "N/A"
-    msg = f"{direction} - {symbol}\n\nEntry: {fmt(price)}\n\nTargets: {fmt(t1)} / {fmt(t2)} / {fmt(t3)} / {fmt(t4)}\n\nStop: {fmt(sl)}\n\nLeverage: {lev} Isolated\n\nTA: RSI {rsi:.1f} | EMA20 {ema20_str} | EMA50 {ema50_str}\nMove SL to entry after TP1."
-    return msg
+        t1,t2,t3,t4,sl=pr*0.989,pr*0.972,pr*0.953,pr*0.897,pr*1.05
+    return f"{d} - {s}\n\nEntry: {fmt(pr)}\n\nTargets: {fmt(t1)} / {fmt(t2)} / {fmt(t3)} / {fmt(t4)}\n\nStop: {fmt(sl)}\n\nLeverage: 5x / 200x Isolated\n\nTA: RSI {rsi:.1f} | EMA20 {fmt(e20) if e20 else 'N/A'} | EMA50 {fmt(e50) if e50 else 'N/A'}"
 
 def gold_signal():
-    p=get_gold()
-    closes=get_klines("PAXG","spot")
-    if len(closes)>20:
-        rsi=calc_rsi(closes,14)
-        ema20=calc_ema(closes,20)
-        ema50=calc_ema(closes,50)
+    p=get_gold(); cl=get_klines("PAXG","spot")
+    if len(cl)>20:
+        rsi=calc_rsi(cl,14); e20=calc_ema(cl,20); e50=calc_ema(cl,50)
+        d="BUY" if (e20 and e50 and e20>e50) or rsi<55 else "SELL"
+    else: d="BUY"; rsi=58
+    if d=="BUY": low,high,sl,tp1,tp2,tp3=p-8,p,p-28,p+18,p+35,p+75
+    else: low,high,sl,tp1,tp2,tp3=p,p+8,p+28,p-18,p-35,p-75
+    return f"XAUUSD {d} {fmt(low)}/{fmt(high)}\nSL {fmt(sl)}\nTP1 {fmt(tp1)}\nTP2 {fmt(tp2)}\nTP3 {fmt(tp3)}\n\nTA: RSI {rsi:.1f} | Live {fmt(p)} | RR 1:2.6"
+
+def menu(pg=0):
+    per=12; st=pg*per; ch=COINS[st:st+per]; btn=[]; row=[]
+    for c in ch:
+        row.append(InlineKeyboardButton(c,callback_data=f"C_{c}"))
+        if len(row)==3: btn.append(row); row=[]
+    if row: btn.append(row)
+    nav=[]
+    if pg>0: nav.append(InlineKeyboardButton("Prev",callback_data=f"P_{pg-1}"))
+    if st+per<len(COINS): nav.append(InlineKeyboardButton("Next",callback_data=f"P_{pg+1}"))
+    if nav: btn.append(nav)
+    btn.append([InlineKeyboardButton("XAUUSD GOLD - 3 TP 1 SL",callback_data="GOLD")])
+    return InlineKeyboardMarkup(btn)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Skelly Pro - Crypto 5x/200x - Gold No Lev\nSelect coin:",reply_markup=menu(0))
+
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q=update.callback_query; await q.answer(); d=q.data
+    if d.startswith("P_"):
+        pg=int(d[2:]); await q.edit_message_text(f"Page {pg+1}:",reply_markup=menu(pg)); return
+    if d=="GOLD":
+        await q.edit_message_text("Fetching GOLD...")
+        txt=gold_signal()
+        await context.bot.send_message(chat_id=q.message.chat.id,text=txt,reply_markup=menu(0))
+        return
+    if d.startswith("C_"):
+        sym=d[2:]; await q.edit_message_text(f"Fetching {sym}...")
+        txt=crypto_signal(sym)
+        await context.bot.send_message(chat_id=q.message.chat.id,text=txt,reply_markup=menu(0))
+        return
+
+def run_bot():
+    app=ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start",start))
+    app.add_handler(CommandHandler("menu",start))
+    app.add_handler(CallbackQueryHandler(handle))
+    app.run_polling()
+
+flask_app=Flask(__name__)
+@flask_app.route("/")
+def home(): return "OK - Skelly Pro Live"
+
+if __name__=="__main__":
+    threading.Thread(target=lambda: flask_app.run(host="0.0.0.0",port=10000),daemon=True).start()
+    run_bot()
